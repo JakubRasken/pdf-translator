@@ -43,7 +43,7 @@ def find_diagram_regions(
         r = fitz.Rect(d["rect"])
         if r.is_empty:
             continue
-        n_curves = sum(1 for it in items if it[0] == "c")
+        n_curves = sum(1 for it in items if it[0] in ("c", "l", "re"))
         # ignore page-spanning borders/backgrounds when growing regions
         if r.width <= 450 and r.height <= 560:
             all_rects.append(r)
@@ -525,16 +525,16 @@ def translate_pdf(
             # Auto-detect horizontal alignment based on source spans positions
             align = 0
             if cell_info["spans"]:
-                span_centers = []
-                for _, _, s in cell_info["spans"]:
-                    s_rect = fitz.Rect(s["bbox"])
-                    span_centers.append((s_rect.x0 + s_rect.x1) / 2.0)
-                avg_span_center = sum(span_centers) / len(span_centers)
+                first_span_rect = fitz.Rect(cell_info["spans"][0][2]["bbox"])
                 cell_rect = cell_info["rect"]
-                cell_center = cell_rect.x0 + cell_rect.width / 2.0
                 
-                # If span center is within 15% of the cell center, treat as center aligned
-                if abs(avg_span_center - cell_center) < cell_rect.width * 0.15:
+                # If the text starts very close to the left edge, it's left aligned
+                if first_span_rect.x0 - cell_rect.x0 < cell_rect.width * 0.15:
+                    align = 0
+                # If the text ends very close to the right edge, it's right aligned
+                elif cell_rect.x1 - first_span_rect.x1 < cell_rect.width * 0.15:
+                    align = 2
+                else:
                     align = 1
                     
             block_metadata[block_id] = {
