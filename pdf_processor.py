@@ -481,68 +481,87 @@ def translate_pdf(
             if not cell_info["spans"]:
                 continue
                 
-            # Group spans by their original block & line index to preserve reading order
-            from collections import defaultdict
-            cell_line_groups = defaultdict(list)
+            # To fix PyMuPDF hallucinating massive merged cells across multiple visual columns,
+            # we cluster the spans inside the cell based on their horizontal overlap!
+            # If two spans are separated by a huge horizontal gap, they fall into separate columns.
+            columns = [] # List of [min_x, max_x, spans_list]
             for block_idx, line_idx, span in cell_info["spans"]:
-                cell_line_groups[(block_idx, line_idx)].append(span)
-                
-            # Sort keys to preserve correct top-to-bottom and left-to-right flow
-            sorted_keys = sorted(cell_line_groups.keys())
-            cell_lines = []
-            dominant_span = None
-            max_span_len = -1
-            
-            for key in sorted_keys:
-                line_spans = cell_line_groups[key]
-                line_text = "".join(s.get("text", "") for s in line_spans)
-                if line_text.strip():
-                    cell_lines.append(line_text.strip())
+                s_rect = fitz.Rect(span["bbox"])
+                matched_col = None
+                for col in columns:
+                    # Overlap horizontally, or within 10 points
+                    if not (s_rect.x1 < col[0] - 10.0 or s_rect.x0 > col[1] + 10.0):
+                        matched_col = col
+                        break
+                if matched_col:
+                    matched_col[0] = min(matched_col[0], s_rect.x0)
+                    matched_col[1] = max(matched_col[1], s_rect.x1)
+                    matched_col[2].append((block_idx, line_idx, span))
+                else:
+                    columns.append([s_rect.x0, s_rect.x1, [(block_idx, line_idx, span)]])
                     
-                for s in line_spans:
-                    s_text = s.get("text", "")
-                    if len(s_text) > max_span_len:
-                        dominant_span = s
-                        max_span_len = len(s_text)
+            # Process each un-merged visual column independently!
+            for col_idx, col in enumerate(columns):
+                col_spans = col[2]
+                
+                # Group spans by their original block & line index to preserve reading order
+                from collections import defaultdict
+                cell_line_groups = defaultdict(list)
+                for block_idx, line_idx, span in col_spans:
+                    cell_line_groups[(block_idx, line_idx)].append(span)
+                    
+                # Sort keys to preserve correct top-to-bottom and left-to-right flow
+                sorted_keys = sorted(cell_line_groups.keys())
+                cell_lines = []
+                dominant_span = None
+                max_span_len = -1
+                
+                for key in sorted_keys:
+                    line_spans = cell_line_groups[key]
+                    line_text = "".join(s.get("text", "") for s in line_spans)
+                    if line_text.strip():
+                        cell_lines.append(line_text.strip())
                         
-            cell_text = "\n".join(cell_lines).strip()
-            if not cell_text or not dominant_span:
-                continue
+                    for s in line_spans:
+                        s_text = s.get("text", "")
+                        if len(s_text) > max_span_len:
+                            dominant_span = s
+                            max_span_len = len(s_text)
+                            
+                cell_text = "\n".join(cell_lines).strip()
+                if not cell_text or not dominant_span:
+                    continue
 
-            # We intentionally do not check block_in_diagram here because some pages
-            # contain valid tables embedded directly inside massive schematic regions.
-            # If find_tables() detects it as a table, we trust it and translate it.
+                # We intentionally do not check block_in_diagram here because some pages
+                # contain valid tables embedded directly inside massive schematic regions.
+                # If find_tables() detects it as a table, we trust it and translate it.
 
-            # Factory code lists (IMV-..., VMV-...) need no translation; leave them stock
-            # so they stay byte-perfect and keep their original position.
-            if is_factory_code_text(cell_text):
-                continue
+                # Factory code lists (IMV-..., VMV-...) need no translation; leave them stock
+                if is_factory_code_text(cell_text):
+                    continue
 
-            block_id = f"{page_idx}_table_{cell_info['table_idx']}_cell_{cell_info['cell_idx']}"
-            blocks_to_translate.append({"id": block_id, "text": cell_text})
-            
-            if cell_info["spans"]:
-                first_span_rect = fitz.Rect(cell_info["spans"][0][2]["bbox"])
-                cell_rect = cell_info["rect"]
+                block_id = f"{page_idx}_table_{cell_info['table_idx']}_cell_{cell_info['cell_idx']}_col_{col_idx}"
+                blocks_to_translate.append({"id": block_id, "text": cell_text})
+                
+                first_span_rect = fitz.Rect(col_spans[0][2]["bbox"])
+                cell_rect = fitz.Rect(cell_info["rect"])
                 
                 # Bulletproof lock: Force the cell's left boundary to EXACTLY match the
-                # X-coordinate of the original text. This prevents text from shifting left
-                # into adjacent columns if find_tables() hallucinates a boundary too far left.
+                # X-coordinate of the original text. This prevents text from shifting left.
                 locked_x0 = first_span_rect.x0
                 cell_rect.x0 = locked_x0
-                align = 0
-                    
-            block_metadata[block_id] = {
-                "page_idx": page_idx,
-                "bbox": tuple(cell_info["rect"]),
-                "fontname": dominant_span.get("font", "helv"),
-                "fontsize": dominant_span.get("size", 10.0),
-                "color_int": dominant_span.get("color", 0),
-                "text": cell_text,
-                "is_single_line": len(cell_lines) == 1,
-                "is_table_cell": True,
-                "align": align
-            }
+                        
+                block_metadata[block_id] = {
+                    "page_idx": page_idx,
+                    "bbox": tuple(cell_rect),
+                    "fontname": dominant_span.get("font", "helv"),
+                    "fontsize": dominant_span.get("size", 10.0),
+                    "color_int": dominant_span.get("color", 0),
+                    "text": cell_text,
+                    "is_single_line": len(cell_lines) == 1,
+                    "is_table_cell": True,
+                    "align": 0
+                }
             
         # 1c. Reconstruct non-table text blocks from unmatched spans
         for block_idx, block in enumerate(page_dict.get("blocks", [])):
