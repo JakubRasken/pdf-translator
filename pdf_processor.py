@@ -382,8 +382,13 @@ def translate_pdf(
         # (never translated or redacted) so diagrams stay exactly as in the original.
         diagram_regions = find_diagram_regions(page)
 
-        # Find tables on this page
-        tables = list(page.find_tables())
+        # Use a higher line intersection tolerance so that cells with minor line
+        # gaps are correctly isolated instead of being grouped into huge blocks.
+        tables = list(page.find_tables(
+            strategy="lines",
+            intersection_y_tolerance=15,
+            intersection_x_tolerance=15
+        ))
         
         # Build cell rect list with metadata
         table_cells = []
