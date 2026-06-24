@@ -388,6 +388,10 @@ def translate_pdf(
         # Build cell rect list with metadata
         table_cells = []
         for table_idx, table in enumerate(tables):
+            table_text = page.get_text("text", clip=table.bbox)
+            if "Dial switch" in table_text or "1 is ON" in table_text or "Dial Switch Introduction" in table_text:
+                continue
+                
             for cell_idx, cell in enumerate(table.cells):
                 if cell:
                     table_cells.append({
@@ -537,10 +541,6 @@ def translate_pdf(
                     if is_factory_code_text(field_text):
                         continue
 
-                    # Skip Dial Switch Introduction fields to keep them in the English original
-                    if any(w in field_text for w in ["Dial switch", "1 is ON", "0 is OFF", "BM1", "BM2", "Factory setting", "Meaning"]):
-                        continue
-
                     block_id = f"{page_idx}_table_{cell_info['table_idx']}_cell_{cell_info['cell_idx']}_line_{key[0]}_{key[1]}_field_{field_idx}"
                     blocks_to_translate.append({"id": block_id, "text": field_text})
                     
@@ -623,7 +623,7 @@ def translate_pdf(
                     continue
                     
                 # Skip text that sits inside a chart/schematic/diagram region
-                is_long_note = len(block_text) > 40 or "\n" in block_text
+                is_long_note = len(block_text) > 60
                 if block_in_diagram(group_bbox, diagram_regions) and not ac_override_for(block_text) and not is_long_note:
                     continue
 
