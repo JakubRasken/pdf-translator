@@ -509,10 +509,9 @@ def translate_pdf(
             if not cell_text or not dominant_span:
                 continue
 
-            # Leave cells that fall inside a diagram region stock (e.g. false "tables"
-            # detected inside schematics), unless the cell is an AC type name to override.
-            if block_in_diagram(cell_info["rect"], diagram_regions) and not ac_override_for(cell_text):
-                continue
+            # We intentionally do not check block_in_diagram here because some pages
+            # contain valid tables embedded directly inside massive schematic regions.
+            # If find_tables() detects it as a table, we trust it and translate it.
 
             # Factory code lists (IMV-..., VMV-...) need no translation; leave them stock
             # so they stay byte-perfect and keep their original position.
