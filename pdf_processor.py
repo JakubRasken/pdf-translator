@@ -382,13 +382,8 @@ def translate_pdf(
         # (never translated or redacted) so diagrams stay exactly as in the original.
         diagram_regions = find_diagram_regions(page)
 
-        # Use a higher line intersection tolerance so that cells with minor line
-        # gaps are correctly isolated instead of being grouped into huge blocks.
-        tables = list(page.find_tables(
-            strategy="lines",
-            intersection_y_tolerance=15,
-            intersection_x_tolerance=15
-        ))
+        # Extract all table bounding boxes and cells
+        tables = list(page.find_tables())
         
         # Build cell rect list with metadata
         table_cells = []
@@ -558,56 +553,78 @@ def translate_pdf(
             if block.get("type") != 0:
                 continue
                 
-            # Reconstruct lines of this block using only unmatched spans
-            block_lines = []
-            dominant_span = None
-            max_span_len = -1
-            
-            for line in block.get("lines", []):
-                line_spans = []
-                for span in line.get("spans", []):
-                    if id(span) in matched_span_ids:
-                        continue
-                    line_spans.append(span)
-                    
-                    s_text = span.get("text", "")
-                    if len(s_text) > max_span_len:
-                        dominant_span = span
-                        max_span_len = len(s_text)
-                        
+            # Filter lines to only those with unmatched spans
+            valid_lines = []
+            for line_idx, line in enumerate(block.get("lines", [])):
+                line_spans = [s for s in line.get("spans", []) if id(s) not in matched_span_ids]
                 if line_spans:
+                    valid_lines.append((line_idx, line, line_spans))
+                    
+            if not valid_lines:
+                continue
+                
+            # Detect if this block is actually a column of separate items (like a BOM)
+            # by checking the vertical gaps between lines. Normal paragraphs have tiny gaps.
+            is_column_of_data = False
+            for i in range(len(valid_lines) - 1):
+                y1 = fitz.Rect(valid_lines[i][1]["bbox"]).y1
+                y0_next = fitz.Rect(valid_lines[i+1][1]["bbox"]).y0
+                if y0_next - y1 > 4.0:
+                    is_column_of_data = True
+                    break
+                    
+            # If it's a column of data, treat each line as its own separate block
+            # so that it gets translated and drawn at its exact original Y coordinate!
+            groups_to_process = []
+            if is_column_of_data:
+                for line_idx, line, line_spans in valid_lines:
+                    groups_to_process.append([(line_idx, line, line_spans)])
+            else:
+                groups_to_process.append(valid_lines)
+                
+            for group_idx, group in enumerate(groups_to_process):
+                group_lines = []
+                dominant_span = None
+                max_span_len = -1
+                group_bbox = fitz.Rect()
+                
+                for _, line, line_spans in group:
                     line_text = "".join(s.get("text", "") for s in line_spans)
                     if line_text.strip():
-                        block_lines.append(line_text.strip())
+                        group_lines.append(line_text.strip())
+                        group_bbox |= fitz.Rect(line["bbox"])
                         
-            block_text = "\n".join(block_lines).strip()
-            if not block_text or not dominant_span:
-                continue
+                    for s in line_spans:
+                        s_text = s.get("text", "")
+                        if len(s_text) > max_span_len:
+                            dominant_span = s
+                            max_span_len = len(s_text)
+                            
+                block_text = "\n".join(group_lines).strip()
+                if not block_text or not dominant_span:
+                    continue
+                    
+                # Skip text that sits inside a chart/schematic/diagram region
+                if block_in_diagram(group_bbox, diagram_regions) and not ac_override_for(block_text):
+                    continue
 
-            # Skip text that sits inside a chart/schematic/diagram region: leave it stock
-            # (no translation, no redaction). AC type-name headers are always kept so they
-            # can be overridden to the official Czech term even if near a product drawing.
-            if block_in_diagram(block["bbox"], diagram_regions) and not ac_override_for(block_text):
-                continue
+                # Factory code lists need no translation; leave them stock.
+                if is_factory_code_text(block_text):
+                    continue
 
-            # Factory code lists need no translation; leave them stock.
-            if is_factory_code_text(block_text):
-                continue
-
-            block_id = f"{page_idx}_block_{block_idx}"
-            blocks_to_translate.append({"id": block_id, "text": block_text})
-            
-            block_metadata[block_id] = {
-                "page_idx": page_idx,
-                "bbox": block["bbox"],
-                "fontname": dominant_span.get("font", "helv"),
-                "fontsize": dominant_span.get("size", 10.0),
-                "color_int": dominant_span.get("color", 0),
-                "text": block_text,
-                "is_single_line": len(block_lines) == 1,
-                "is_table_cell": False
-            }
-            
+                block_id = f"{page_idx}_block_{block_idx}_g_{group_idx}"
+                blocks_to_translate.append({"id": block_id, "text": block_text})
+                
+                block_metadata[block_id] = {
+                    "page_idx": page_idx,
+                    "bbox": tuple(group_bbox),
+                    "fontname": dominant_span.get("font", "helv"),
+                    "fontsize": dominant_span.get("size", 10.0),
+                    "color_int": dominant_span.get("color", 0),
+                    "text": block_text,
+                    "is_single_line": len(group_lines) == 1,
+                    "is_table_cell": False
+                }
     logger.info(f"Found {len(blocks_to_translate)} text blocks to translate.")
 
     # Step 2: Translate in batches
