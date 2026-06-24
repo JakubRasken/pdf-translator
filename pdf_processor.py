@@ -586,13 +586,16 @@ def translate_pdf(
                 group_lines = []
                 dominant_span = None
                 max_span_len = -1
-                group_bbox = fitz.Rect()
+                group_bbox = None
                 
                 for _, line, line_spans in group:
                     line_text = "".join(s.get("text", "") for s in line_spans)
                     if line_text.strip():
                         group_lines.append(line_text.strip())
-                        group_bbox |= fitz.Rect(line["bbox"])
+                        if group_bbox is None:
+                            group_bbox = fitz.Rect(line["bbox"])
+                        else:
+                            group_bbox |= fitz.Rect(line["bbox"])
                         
                     for s in line_spans:
                         s_text = s.get("text", "")
