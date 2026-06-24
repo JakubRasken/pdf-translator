@@ -107,7 +107,8 @@ CZECH_GLOSSARY = {
     "leteckého spirálového": "aerodynamického spirálového",
     "grilování ventilátoru": "mřížka ventilátoru",
     "směr proudění vzduchu sleduje směr mřížky": "směr proudění vzduchu sleduje směr mřížky",
-    "Terminál pevně upevněte a způsobí uvolnění spojení havárie topení": "Svorku pevně upevněte, jinak uvolněné spojení způsobí přehřátí"
+    "Terminál pevně upevněte a způsobí uvolnění spojení havárie topení": "Svorku pevně upevněte, jinak uvolněné spojení způsobí přehřátí",
+    "bezpečná třída": "bezpečnostní třída"
 }
 
 
@@ -117,9 +118,11 @@ CZECH_GLOSSARY = {
 # (machine translation mangles these product type names). Factory codes (IMV-..., VMV-...)
 # are separate blocks and never match, so they stay intact.
 AC_TYPE_OVERRIDES = {
-    "ROUND FLOW CASSETTE": "OBOUCESTNÁ KAZETOVÁ JEDNOTKA",
+    "ROUND FLOW CASSETTE": "KRUHOVÁ KAZETOVÁ JEDNOTKA",
     "COMPACT FOUR-WAY CASSETTE": "KOMPAKTNÍ 4CESTNÁ KAZETOVÁ JEDNOTKA",
     "ONE-WAY CASSETTE": "1CESTNÁ KAZETOVÁ JEDNOTKA",
+    "TWO-WAY CASSETTE": "2CESTNÁ KAZETOVÁ JEDNOTKA",
+    "FOUR-WAY CASSETTE": "4CESTNÁ KAZETOVÁ JEDNOTKA",
     "SLIM DUCT": "NÍZKÁ KANÁLOVÁ JEDNOTKA",
     "MEDIUM STATIC PRESSURE DUCT": "KANÁLOVÁ JEDNOTKA SE STŘEDNÍM TLAKEM",
     "HIGH STATIC PRESSURE DUCT": "KANÁLOVÁ JEDNOTKA S VYSOKÝM TLAKEM",
@@ -128,7 +131,8 @@ AC_TYPE_OVERRIDES = {
     "FLOOR-CEILING": "PARAPETNÍ / STROPNÍ JEDNOTKA",
     "HIGH WALL": "NÁSTĚNNÁ JEDNOTKA",
     "CONSOLE": "PARAPETNÍ JEDNOTKA",
-    "FRESH AIR DUCT": "KANÁLOVÁ JEDNOTKA",
+    "FRESH AIR DUCT": "KANÁLOVÁ JEDNOTKA ČERSTVÉHO VZDUCHU",
+    "I": "I"
 }
 
 
