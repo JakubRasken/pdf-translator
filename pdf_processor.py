@@ -492,14 +492,12 @@ def translate_pdf(
                 
             sorted_keys = sorted(cell_line_groups.keys())
             
-            # Step 1: Pre-flight check. Does ANY line in this cell contain multiple fields separated by > 10.0 points?
-            # If so, PyMuPDF hallucinated a cell across multiple columns, and we MUST shatter it.
-            # If not, the cell is intact and should be translated as a single block so text can wrap freely!
-            is_hallucinated_merged_cell = False
-            row_fields_map = {}
-            
+            # Now, for each physical line inside the cell, we must check for large horizontal gaps
+            # (e.g. > 10 points) which indicate that PyMuPDF hallucinated a cell across multiple columns.
             for key in sorted_keys:
                 line_spans = cell_line_groups[key]
+                
+                # Sort spans in this line by their X-coordinate
                 line_spans.sort(key=lambda s: fitz.Rect(s["bbox"]).x0)
                 
                 fields = []
@@ -517,102 +515,53 @@ def translate_pdf(
                 if current_field:
                     fields.append(current_field)
                     
-                row_fields_map[key] = fields
-                if len(fields) > 1:
-                    is_hallucinated_merged_cell = True
-                    
-            if not is_hallucinated_merged_cell:
-                # The cell is perfectly intact! Translate it as a single block so it wraps naturally.
-                cell_lines = []
-                dominant_span = None
-                max_span_len = -1
-                
-                for key in sorted_keys:
-                    line_spans = cell_line_groups[key]
-                    line_text = "".join(s.get("text", "") for s in line_spans)
-                    if line_text.strip():
-                        cell_lines.append(line_text.strip())
+                # Now translate each distinct field in this row independently!
+                for field_idx, field_spans in enumerate(fields):
+                    field_text = "".join(s.get("text", "") for s in field_spans).strip()
+                    if not field_text:
+                        continue
                         
-                    for s in line_spans:
+                    # Find dominant span for styling
+                    dominant_span = None
+                    max_span_len = -1
+                    for s in field_spans:
                         s_text = s.get("text", "")
                         if len(s_text) > max_span_len:
                             dominant_span = s
                             max_span_len = len(s_text)
                             
-                cell_text = "\n".join(cell_lines).strip()
-                if not cell_text or not dominant_span:
-                    continue
+                    if not dominant_span:
+                        continue
 
-                if is_factory_code_text(cell_text):
-                    continue
+                    # Factory code lists (IMV-..., VMV-...) need no translation; leave them stock
+                    if is_factory_code_text(field_text):
+                        continue
 
-                block_id = f"{page_idx}_table_{cell_info['table_idx']}_cell_{cell_info['cell_idx']}"
-                blocks_to_translate.append({"id": block_id, "text": cell_text})
-                
-                # Auto-detect horizontal alignment based on source spans positions
-                align = 0
-                if cell_info["spans"]:
-                    first_span_rect = fitz.Rect(cell_info["spans"][0][2]["bbox"])
-                    cell_rect = cell_info["rect"]
-                    if first_span_rect.x0 - cell_rect.x0 < cell_rect.width * 0.15:
-                        align = 0
-                    elif cell_rect.x1 - first_span_rect.x1 < cell_rect.width * 0.15:
-                        align = 2
-                    else:
-                        align = 1
-                
-                block_metadata[block_id] = {
-                    "page_idx": page_idx,
-                    "bbox": tuple(cell_info["rect"]),
-                    "fontname": dominant_span.get("font", "helv"),
-                    "fontsize": dominant_span.get("size", 10.0),
-                    "color_int": dominant_span.get("color", 0),
-                    "text": cell_text,
-                    "is_single_line": len(cell_lines) == 1,
-                    "is_table_cell": True,
-                    "align": align
-                }
-            else:
-                # The cell is hallucinated! Shatter it and translate fields independently with tight bounding boxes!
-                for key in sorted_keys:
-                    fields = row_fields_map[key]
-                    for field_idx, field_spans in enumerate(fields):
-                        field_text = "".join(s.get("text", "") for s in field_spans).strip()
-                        if not field_text:
-                            continue
-                            
-                        dominant_span = None
-                        max_span_len = -1
-                        for s in field_spans:
-                            s_text = s.get("text", "")
-                            if len(s_text) > max_span_len:
-                                dominant_span = s
-                                max_span_len = len(s_text)
-                                
-                        if not dominant_span:
-                            continue
+                    # Skip Dial Switch Introduction fields to keep them in the English original
+                    if any(w in field_text for w in ["Dial switch", "1 is ON", "0 is OFF", "BM1", "BM2", "Factory setting", "Meaning"]):
+                        continue
 
-                        if is_factory_code_text(field_text):
-                            continue
-
-                        block_id = f"{page_idx}_table_{cell_info['table_idx']}_cell_{cell_info['cell_idx']}_line_{key[0]}_{key[1]}_field_{field_idx}"
-                        blocks_to_translate.append({"id": block_id, "text": field_text})
+                    block_id = f"{page_idx}_table_{cell_info['table_idx']}_cell_{cell_info['cell_idx']}_line_{key[0]}_{key[1]}_field_{field_idx}"
+                    blocks_to_translate.append({"id": block_id, "text": field_text})
+                    
+                    first_span_rect = fitz.Rect(field_spans[0]["bbox"])
+                    
+                    # Create a tight bounding box for the field
+                    field_bbox = fitz.Rect(field_spans[0]["bbox"])
+                    for s in field_spans:
+                        field_bbox |= fitz.Rect(s["bbox"])
                         
-                        field_bbox = fitz.Rect(field_spans[0]["bbox"])
-                        for s in field_spans:
-                            field_bbox |= fitz.Rect(s["bbox"])
-                            
-                        block_metadata[block_id] = {
-                            "page_idx": page_idx,
-                            "bbox": tuple(field_bbox),
-                            "fontname": dominant_span.get("font", "helv"),
-                            "fontsize": dominant_span.get("size", 10.0),
-                            "color_int": dominant_span.get("color", 0),
-                            "text": field_text,
-                            "is_single_line": True,
-                            "is_table_cell": True,
-                            "align": 0
-                        }
+                    block_metadata[block_id] = {
+                        "page_idx": page_idx,
+                        "bbox": tuple(field_bbox),
+                        "fontname": dominant_span.get("font", "helv"),
+                        "fontsize": dominant_span.get("size", 10.0),
+                        "color_int": dominant_span.get("color", 0),
+                        "text": field_text,
+                        "is_single_line": True,
+                        "is_table_cell": True,
+                        "align": 0
+                    }
             
         # 1c. Reconstruct non-table text blocks from unmatched spans
         for block_idx, block in enumerate(page_dict.get("blocks", [])):
