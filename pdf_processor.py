@@ -521,20 +521,16 @@ def translate_pdf(
             block_id = f"{page_idx}_table_{cell_info['table_idx']}_cell_{cell_info['cell_idx']}"
             blocks_to_translate.append({"id": block_id, "text": cell_text})
             
-            # Auto-detect horizontal alignment based on source spans positions
-            align = 0
             if cell_info["spans"]:
                 first_span_rect = fitz.Rect(cell_info["spans"][0][2]["bbox"])
                 cell_rect = cell_info["rect"]
                 
-                # If the text starts very close to the left edge, it's left aligned
-                if first_span_rect.x0 - cell_rect.x0 < cell_rect.width * 0.15:
-                    align = 0
-                # If the text ends very close to the right edge, it's right aligned
-                elif cell_rect.x1 - first_span_rect.x1 < cell_rect.width * 0.15:
-                    align = 2
-                else:
-                    align = 1
+                # Bulletproof lock: Force the cell's left boundary to EXACTLY match the
+                # X-coordinate of the original text. This prevents text from shifting left
+                # into adjacent columns if find_tables() hallucinates a boundary too far left.
+                locked_x0 = first_span_rect.x0
+                cell_rect.x0 = locked_x0
+                align = 0
                     
             block_metadata[block_id] = {
                 "page_idx": page_idx,
