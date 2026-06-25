@@ -265,7 +265,7 @@ def bbox_overlaps(
     
     return overlap_x > tolerance and overlap_y > tolerance
 
-def check_fits(rect: fitz.Rect, text: str, fontsize: float, fontname: str, fontfile: str = None) -> bool:
+def check_fits(rect: fitz.Rect, text: str, fontsize: float, fontname: str, fontfile: str = None, doc_temp=None, page_temp=None) -> bool:
     """
     Checks if the given text fits completely inside the bounding rect
     at the specified font size and font name.
@@ -273,9 +273,11 @@ def check_fits(rect: fitz.Rect, text: str, fontsize: float, fontname: str, fontf
     if rect.width <= 0 or rect.height <= 0:
         return False
         
-    doc_temp = fitz.open()
-    # Create page slightly larger than the bounding box to avoid canvas bounds errors
-    page_temp = doc_temp.new_page(width=rect.x1 + 100, height=rect.y1 + 100)
+    created_doc = False
+    if doc_temp is None or page_temp is None:
+        doc_temp = fitz.open()
+        page_temp = doc_temp.new_page(width=rect.x1 + 100, height=rect.y1 + 100)
+        created_doc = True
     
     if fontfile:
         try:
@@ -285,7 +287,9 @@ def check_fits(rect: fitz.Rect, text: str, fontsize: float, fontname: str, fontf
             
     # insert_textbox returns remaining height (>= 0) if it fits, or negative if it overflows
     rc = page_temp.insert_textbox(rect, text, fontsize=fontsize, fontname=fontname)
-    doc_temp.close()
+    
+    if created_doc:
+        doc_temp.close()
     
     return rc >= 0
 
@@ -298,7 +302,9 @@ def find_fitting_fontsize(
     min_size: float = None,
     max_size: float = MAX_FONT_SIZE,
     is_single_line: bool = False,
-    is_table_cell: bool = False
+    is_table_cell: bool = False,
+    doc_temp=None,
+    page_temp=None
 ) -> float:
     """
     Finds the largest font size (up to initial_size) that fits the text
@@ -343,7 +349,7 @@ def find_fitting_fontsize(
             logger.error(f"Error calculating single-line font size: {e}")
 
     # Otherwise, height-based binary search for paragraphs
-    if check_fits(rect, text, initial_size, fontname, fontfile):
+    if check_fits(rect, text, initial_size, fontname, fontfile, doc_temp, page_temp):
         return initial_size
 
     low = min_size
@@ -352,7 +358,7 @@ def find_fitting_fontsize(
     
     for _ in range(FONT_SCALING_PRECISION_ITERATIONS):
         mid = (low + high) / 2.0
-        if check_fits(rect, text, mid, fontname, fontfile):
+        if check_fits(rect, text, mid, fontname, fontfile, doc_temp, page_temp):
             best_size = mid
             low = mid  # Try larger size
         else:
@@ -699,6 +705,8 @@ def translate_pdf(
         page.apply_redactions(images=0, graphics=0, text=0)
         
         # 4. Re-insert the translated text inside the redacted bounding boxes
+        doc_temp = fitz.open()
+        page_temp = doc_temp.new_page(width=page.rect.width + 100, height=page.rect.height + 100)
         registered_fonts = set()
         for bid in page_block_ids:
             meta = block_metadata[bid]
@@ -753,7 +761,9 @@ def translate_pdf(
                 meta["fontsize"],
                 fontfile=font_path,
                 is_single_line=is_single_line,
-                is_table_cell=is_table_cell
+                is_table_cell=is_table_cell,
+                doc_temp=doc_temp,
+                page_temp=page_temp
             )
             
             # Removed infinite horizontal expansion for single-line blocks to prevent overlapping
@@ -764,8 +774,6 @@ def translate_pdf(
             
             # Vertically center all table cells (single or multi-line) using a dry-run
             if is_table_cell:
-                doc_temp = fitz.open()
-                page_temp = doc_temp.new_page(width=rect.x1 + 100, height=rect.y1 + 100)
                 if font_path and custom_font_name in registered_fonts:
                     try:
                         page_temp.insert_font(fontname=custom_font_name, fontfile=font_path)
@@ -779,7 +787,6 @@ def translate_pdf(
                     fontname=custom_font_name,
                     align=align
                 )
-                doc_temp.close()
                 
                 if unused_height > 0.0:
                     shift = unused_height / 2.0
@@ -795,6 +802,8 @@ def translate_pdf(
                 color=color,
                 align=align
             )
+            
+        doc_temp.close()
             
     # Save the resulting translated PDF
     logger.info(f"Saving translated PDF to: {output_path}")
